@@ -1,0 +1,16 @@
+<% if (users.length === 0) { %>
+  <tr><td colspan="5">No users found.</td></tr>
+<% } else { %>
+  <% users.forEach(user => { %>
+    <tr data-user-id="<%= user.id %>">
+      <td><%= user.id %></td>
+      <td class="username"><%= user.username %></td>
+      <td class="email"><%= user.email %></td>
+      <td class="credits"><%= user.credits %></td>
+      <td class="actions">
+        <button class="btn btn-sm btn-primary edit-user-btn" data-id="<%= user.id %>" data-username="<%= user.username %>" data-email="<%= user.email %>" data-credits="<%= user.credits %>">Edit</button>
+        <button class="btn btn-sm btn-danger delete-user-btn" data-id="<%= user.id %>" data-username="<%= user.username %>">Delete</button>
+      </td>
+    </tr>
+  <% }) %>
+<% } %> 
