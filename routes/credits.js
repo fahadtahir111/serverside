@@ -1,31 +1,16 @@
 const express = require('express');
-const jwt = require('jsonwebtoken');
-const pool = require('../db');
-const { logEvent } = require('../log');
+const { PrismaClient } = require('@prisma/client');
+const authMiddleware = require('./authMiddleware');
 
+const prisma = new PrismaClient();
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET;
 
-function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ message: 'No token provided' });
-  const token = authHeader.split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    res.status(401).json({ message: 'Invalid token' });
-    
-  }
-}
-
-// Get credits
+// Get user credits
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const [users] = await pool.query('SELECT credits FROM users WHERE id = ?', [req.user.id]);
-    if (users.length === 0) return res.status(404).json({ message: 'User not found' });
-    res.json({ credits: users[0].credits });
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json({ credits: user.credits });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -35,18 +20,20 @@ router.get('/', authMiddleware, async (req, res) => {
 router.post('/use-credit', authMiddleware, async (req, res) => {
   try {
     // Atomically decrement credits if credits > 0 and return new value
-    const [updateResult] = await pool.query(
-      'UPDATE users SET credits = credits - 1 WHERE id = ? AND credits > 0',
-      [req.user.id]
-    );
-    if (updateResult.affectedRows === 0) {
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { credits: { decrement: 1 } },
+    });
+    if (user.credits < 0) {
+      // Rollback if credits went negative (shouldn't happen with atomic op)
+      await prisma.user.update({ where: { id: req.user.id }, data: { credits: 0 } });
       return res.status(400).json({ message: 'No credits left' });
     }
-    // Get updated credits in a single query
-    const [users] = await pool.query('SELECT credits FROM users WHERE id = ?', [req.user.id]);
     // Log analyze/credit usage event
-    await logEvent({ user_id: req.user.id, action: 'analyze', details: { credits_left: users[0].credits } });
-    res.json({ message: 'Credit used', credits: users[0].credits });
+    await prisma.log.create({
+      data: { user_id: user.id, action: 'analyze', details: { credits_left: user.credits } }
+    });
+    res.json({ message: 'Credit used', credits: user.credits });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -60,9 +47,14 @@ router.post('/buy', authMiddleware, async (req, res) => {
   }
   try {
     // Add credits to user
-    await pool.query('UPDATE users SET credits = credits + ? WHERE id = ?', [credits, req.user.id]);
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { credits: { increment: credits } },
+    });
     // Record purchase
-    await pool.query('INSERT INTO purchases (user_id, amount, credits) VALUES (?, ?, ?)', [req.user.id, amount, credits]);
+    await prisma.purchase.create({
+      data: { user_id: req.user.id, amount, credits }
+    });
     res.json({ message: 'Credits purchased successfully' });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });

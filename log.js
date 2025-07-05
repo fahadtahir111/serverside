@@ -1,10 +1,11 @@
-const pool = require('./db');
+const Log = require('./models/Log');
 
 async function logEvent({ user_id = null, action, details = null }) {
-  await pool.query(
-    'INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)',
-    [user_id, action, details ? JSON.stringify(details) : null]
-  );
+  await Log.create({
+    user_id,
+    action,
+    details,
+  });
 }
 
 module.exports = { logEvent }; 
